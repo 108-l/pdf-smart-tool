@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.egg-info/
+config/settings.json
+samples/
+输出结果/
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

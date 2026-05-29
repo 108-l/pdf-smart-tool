@@ -209,15 +209,95 @@ class PdfSmartApp:
         threading.Thread(target=self._process, args=(text,), daemon=True).start()
 
     def _process(self, text):
+        """处理消息（AI 对话 + 实际执行）"""
         try:
             ctx = ""
+            out_path = ""
             if self.filepath:
                 info = PdfOps.get_info(self.filepath)
                 ctx = f"当前PDF：{Path(self.filepath).name}\n"
                 for k, v in info.items():
                     ctx += f"{k}：{v}\n"
-            reply = self.ai.chat(text, ctx)
+
+            # 检测用户意图并执行
+            t = text.lower()
+            fp = self.filepath
+            base = Path(fp).parent if fp else Path(".")
+            name = Path(fp).stem if fp else ""
+
+            if "转word" in t or "转成word" in t or "word" in t:
+                out_path = str(base / f"{name}.docx")
+                PdfOps.to_word(fp, out_path)
+                reply = f"✅ 已转成 Word！\n\n输出文件：{out_path}"
+            elif "水印" in t:
+                # 提取水印文字
+                import re
+                m = re.search(r'[「【](.+?)[」】]', text)
+                wm_text = m.group(1) if m else "机密"
+                out_path = str(base / f"{name}_带水印.pdf")
+                PdfOps.add_watermark(fp, wm_text, out_path)
+                reply = f"✅ 已添加水印「{wm_text}」！\n\n输出文件：{out_path}"
+            elif "页码" in t or "页数" in t:
+                out_path = str(base / f"{name}_带页码.pdf")
+                PdfOps.add_page_numbers(fp, out_path)
+                reply = f"✅ 已添加页码！\n\n输出文件：{out_path}"
+            elif "压缩" in t:
+                out_path = str(base / f"{name}_压缩.pdf")
+                PdfOps.compress(fp, out_path)
+                reply = f"✅ 已压缩！\n\n输出文件：{out_path}"
+            elif "旋转" in t:
+                out_path = str(base / f"{name}_旋转.pdf")
+                PdfOps.rotate(fp, 90, out_path)
+                reply = f"✅ 已旋转！\n\n输出文件：{out_path}"
+            elif "合并" in t or "merge" in t:
+                # 主线程选文件
+                files = []
+                event = threading.Event()
+                def pick_files():
+                    nonlocal files
+                    from tkinter import filedialog
+                    f = filedialog.askopenfilenames(title="选择要合并的PDF", filetypes=[("PDF", "*.pdf")])
+                    files = list(f) if f else []
+                    event.set()
+                self.root.after(0, pick_files)
+                event.wait(timeout=30)
+                if files:
+                    out_path = str(base / "合并结果.pdf")
+                    PdfOps.merge(list(files), out_path)
+                    reply = f"✅ 已合并 {len(files)} 个 PDF！\n\n输出文件：{out_path}"
+                else:
+                    reply = "已取消合并操作"
+            elif "加密" in t or "密码" in t:
+                pwd = [None]
+                event = threading.Event()
+                def ask_pwd():
+                    import tkinter.simpledialog as sd
+                    pwd[0] = sd.askstring("加密", "请输入密码：", show="*")
+                    event.set()
+                self.root.after(0, ask_pwd)
+                event.wait(timeout=30)
+                if pwd[0]:
+                    out_path = str(base / f"{name}_加密.pdf")
+                    PdfOps.encrypt(fp, pwd[0], out_path)
+                    reply = f"✅ 已加密！密码：{pwd[0]}\n\n输出文件：{out_path}"
+                else:
+                    reply = "已取消加密操作"
+            elif "拆分" in t or "每页" in t:
+                out_dir = str(base / f"{name}_拆分")
+                results = PdfOps.split(fp, out_dir)
+                reply = f"✅ 已拆分为 {len(results)} 个文件！\n\n输出目录：{out_dir}"
+            elif "图片" in t and ("提取" in t or "抽" in t):
+                out_dir = str(base / f"{name}_图片")
+                results = PdfOps.extract_images(fp, out_dir)
+                reply = f"✅ 已提取 {len(results)} 张图片！\n\n输出目录：{out_dir}"
+            else:
+                # AI 对话
+                reply = self.ai.chat(text, ctx)
+                self.root.after(0, self._show_reply, reply)
+                return
+
             self.root.after(0, self._show_reply, reply)
+
         except Exception as e:
             self.root.after(0, self._show_reply, f"❌ 出错了：{e}")
 
